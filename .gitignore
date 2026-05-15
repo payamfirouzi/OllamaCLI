@@ -60,6 +60,9 @@ pnpm-debug.log*
 *.swo
 *~
 
+# Personal local helper scripts
+pull.sh
+
 # Ollama/local model artifacts should not live in this repo
 .ollama/
 models/
