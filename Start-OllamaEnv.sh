@@ -365,7 +365,7 @@ if [[ -n "$SELECTED_MODEL" ]]; then
     ok "OLLAMA_MODEL = '$SELECTED_MODEL'."
 fi
 
-# Persist to shell profiles without sed -i, which differs across macOS/Linux.
+# Persist to shell profiles with a portable updater.
 if command -v python3 &>/dev/null; then
     OLLAMA_HOST_VALUE="$OLLAMA_HOST" OLLAMA_MODEL_VALUE="${SELECTED_MODEL:-}" python3 - <<'PYEOF'
 import os
