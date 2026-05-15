@@ -1,0 +1,12 @@
+# Keep shell scripts runnable on macOS/Linux
+*.sh text eol=lf
+
+# Keep PowerShell scripts normalized as text
+*.ps1 text
+
+# Documentation and config
+*.md text
+*.txt text
+*.json text
+*.yml text
+*.yaml text
