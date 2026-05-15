@@ -1,0 +1,55 @@
+# OlamaCLI — Model Pull List
+#
+# This file is read by Start-OllamaEnv.sh on macOS/Linux.
+# patch-agents.sh also uses this file only when no Ollama models exist yet,
+# so it can show a first-pull recommendation menu.
+# Lines starting with # are comments and are ignored.
+# Blank lines are ignored.
+#
+# Format (one model per line):
+#   <model-name>              — pulls the default (latest) tag
+#   <model-name>:<tag>        — pulls a specific tag or quantization
+#
+# Quantization tags (add as suffix, e.g. llama3.1:q4_K_M):
+#   q8_0    ~100% quality, ~12% smaller
+#   q6_K    ~99%  quality, ~35% smaller
+#   q5_K_M  ~97%  quality, ~41% smaller  (recommended)
+#   q4_K_M  ~95%  quality, ~50% smaller  (most popular)
+#   q3_K_M  ~91%  quality, ~62% smaller
+#   q2_K    ~85%  quality, ~75% smaller  (last resort)
+#
+# M5 Pro 24 GB unified memory — recommended models that fit comfortably:
+# ─────────────────────────────────────────────────────────────────────
+# All models below use less than 16 GB leaving room for the OS + Metal overhead.
+
+# General purpose
+llama3.1:8b
+mistral:7b-instruct
+
+# Code-focused
+codellama:7b
+deepseek-coder:6.7b
+
+# Fast / lightweight (good for quick completions)
+qwen2.5-coder:7b
+phi3:mini
+
+# Optional Q4 models — commented on purpose.
+# Uncomment only the ones you personally want before running the pull script.
+# Q4 is a good later choice when you want bigger models with lower memory use.
+# Tag names can vary by model page on Ollama; if a Q4 line fails, check the
+# model's Ollama page and replace the tag with one that exists there.
+#
+# General-purpose Q4 options:
+# llama3.1:q4_K_M
+# mistral:q4_K_M
+# qwen2.5:q4_K_M
+#
+# Code-focused Q4 options:
+# codellama:q4_K_M
+# qwen2.5-coder:q4_K_M
+# deepseek-coder:q4_K_M
+#
+# Larger models — use only if no other GPU apps are open:
+# codellama:34b-q4_K_M
+# llama3.1:70b-q4_K_M

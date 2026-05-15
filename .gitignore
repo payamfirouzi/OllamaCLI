@@ -1,18 +1,68 @@
-# Build and Release Folders
-bin-debug/
-bin-release/
-[Oo]bj/
-[Bb]in/
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
 
-# Other files and folders
-.settings/
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
-# Executables
-*.swf
-*.air
-*.ipa
-*.apk
+# VS Code workspace state
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
 
-# Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
-# should NOT be excluded as they contain compiler settings and other important
-# information for Eclipse / Flash Builder.
+# Local environment and secrets
+.env
+.env.*
+*.local
+*.secret
+secrets.*
+
+# Logs and runtime files
+*.log
+logs/
+*.pid
+*.tmp
+*.temp
+/tmp/
+
+# Python helper artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Node helper artifacts
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Shell/editor backup files
+*.bak
+*.swp
+*.swo
+*~
+
+# Ollama/local model artifacts should not live in this repo
+.ollama/
+models/
+*.gguf
+*.safetensors
+*.bin
