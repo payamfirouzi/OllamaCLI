@@ -178,19 +178,51 @@ persist_environment() {
     export OLLAMA_HOST="$OLLAMA_HOST"
     export OLLAMA_MODEL="$SELECTED_MODEL"
 
-    for profile in "$HOME/.zshrc" "$HOME/.bashrc"; do
-        touch "$profile"
-        if grep -q '^export OLLAMA_HOST=' "$profile"; then
-            sed -i.bak "s|^export OLLAMA_HOST=.*|export OLLAMA_HOST=\"$OLLAMA_HOST\"|" "$profile"
-        else
+    if command -v python3 >/dev/null 2>&1; then
+        OLLAMA_HOST_VALUE="$OLLAMA_HOST" OLLAMA_MODEL_VALUE="$SELECTED_MODEL" python3 - <<'PYEOF'
+import os
+from pathlib import Path
+
+updates = {
+    "OLLAMA_HOST": os.environ["OLLAMA_HOST_VALUE"],
+    "OLLAMA_MODEL": os.environ["OLLAMA_MODEL_VALUE"],
+}
+
+for profile_name in (".zshrc", ".bashrc"):
+    path = Path.home() / profile_name
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    seen = set()
+    next_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        replaced = False
+        for key, value in updates.items():
+            if stripped.startswith(f"export {key}="):
+                next_lines.append(f'export {key}="{value}"')
+                seen.add(key)
+                replaced = True
+                break
+        if not replaced:
+            next_lines.append(line)
+
+    missing = [key for key in updates if key not in seen]
+    if missing and next_lines and next_lines[-1].strip():
+        next_lines.append("")
+    for key in missing:
+        next_lines.append(f'export {key}="{updates[key]}"')
+
+    path.write_text("\n".join(next_lines) + "\n", encoding="utf-8")
+PYEOF
+    else
+        for profile in "$HOME/.zshrc" "$HOME/.bashrc"; do
+            touch "$profile"
+            grep -v '^export OLLAMA_HOST=' "$profile" | grep -v '^export OLLAMA_MODEL=' > "${profile}.tmp"
+            mv "${profile}.tmp" "$profile"
             printf '\nexport OLLAMA_HOST="%s"\n' "$OLLAMA_HOST" >> "$profile"
-        fi
-        if grep -q '^export OLLAMA_MODEL=' "$profile"; then
-            sed -i.bak "s|^export OLLAMA_MODEL=.*|export OLLAMA_MODEL=\"$SELECTED_MODEL\"|" "$profile"
-        else
             printf 'export OLLAMA_MODEL="%s"\n' "$SELECTED_MODEL" >> "$profile"
-        fi
-    done
+        done
+    fi
     ok "Saved OLLAMA_HOST and OLLAMA_MODEL to ~/.zshrc and ~/.bashrc"
 
     if $IS_MAC; then

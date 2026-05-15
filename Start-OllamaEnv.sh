@@ -357,31 +357,59 @@ fi
 header "STEP 4 of 5 — Environment Variables"
 
 export OLLAMA_HOST="$OLLAMA_HOST"
-# Persist to shell profile (bash and zsh)
-for PROFILE in "$HOME/.bashrc" "$HOME/.zshrc"; do
-    if [[ -f "$PROFILE" ]]; then
-        if grep -q "OLLAMA_HOST" "$PROFILE"; then
-            sed -i "s|export OLLAMA_HOST=.*|export OLLAMA_HOST=\"$OLLAMA_HOST\"|" "$PROFILE"
-        else
-            echo "export OLLAMA_HOST=\"$OLLAMA_HOST\"" >> "$PROFILE"
-        fi
-    fi
-done
 ok "OLLAMA_HOST = '$OLLAMA_HOST'  (exported for this session + shell profile)."
 info "Any process started after this point — including VS Code — will inherit OLLAMA_HOST."
 
 if [[ -n "$SELECTED_MODEL" ]]; then
     export OLLAMA_MODEL="$SELECTED_MODEL"
-    for PROFILE in "$HOME/.bashrc" "$HOME/.zshrc"; do
-        if [[ -f "$PROFILE" ]]; then
-            if grep -q "OLLAMA_MODEL" "$PROFILE"; then
-                sed -i "s|export OLLAMA_MODEL=.*|export OLLAMA_MODEL=\"$SELECTED_MODEL\"|" "$PROFILE"
-            else
-                echo "export OLLAMA_MODEL=\"$SELECTED_MODEL\"" >> "$PROFILE"
-            fi
-        fi
-    done
     ok "OLLAMA_MODEL = '$SELECTED_MODEL'."
+fi
+
+# Persist to shell profiles without sed -i, which differs across macOS/Linux.
+if command -v python3 &>/dev/null; then
+    OLLAMA_HOST_VALUE="$OLLAMA_HOST" OLLAMA_MODEL_VALUE="${SELECTED_MODEL:-}" python3 - <<'PYEOF'
+import os
+from pathlib import Path
+
+updates = {"OLLAMA_HOST": os.environ["OLLAMA_HOST_VALUE"]}
+model = os.environ.get("OLLAMA_MODEL_VALUE", "")
+if model:
+    updates["OLLAMA_MODEL"] = model
+
+for profile_name in (".bashrc", ".zshrc"):
+    path = Path.home() / profile_name
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    seen = set()
+    next_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        replaced = False
+        for key, value in updates.items():
+            if stripped.startswith(f"export {key}="):
+                next_lines.append(f'export {key}="{value}"')
+                seen.add(key)
+                replaced = True
+                break
+        if not replaced:
+            next_lines.append(line)
+
+    missing = [key for key in updates if key not in seen]
+    if missing and next_lines and next_lines[-1].strip():
+        next_lines.append("")
+    for key in missing:
+        next_lines.append(f'export {key}="{updates[key]}"')
+
+    path.write_text("\n".join(next_lines) + "\n", encoding="utf-8")
+PYEOF
+else
+    for PROFILE in "$HOME/.bashrc" "$HOME/.zshrc"; do
+        touch "$PROFILE"
+        grep -v '^export OLLAMA_HOST=' "$PROFILE" | grep -v '^export OLLAMA_MODEL=' > "${PROFILE}.tmp"
+        mv "${PROFILE}.tmp" "$PROFILE"
+        printf '\nexport OLLAMA_HOST="%s"\n' "$OLLAMA_HOST" >> "$PROFILE"
+        [[ -n "$SELECTED_MODEL" ]] && printf 'export OLLAMA_MODEL="%s"\n' "$SELECTED_MODEL" >> "$PROFILE"
+    done
 fi
 
 # Write .vscode/settings.json
