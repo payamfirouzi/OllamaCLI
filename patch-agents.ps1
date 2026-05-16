@@ -1,25 +1,6 @@
-<#
+﻿<#
 .SYNOPSIS
     Pick one Ollama model and register it as a VS Code agent.
-
-.DESCRIPTION
-    1. Lists locally-installed Ollama models and lets you pick ONE.
-    2. Sets OLLAMA_HOST permanently in the Windows user profile
-       (this is what GitHub Copilot Chat uses to detect local models —
-        no settings.json key is needed for Copilot itself).
-    3. Writes .vscode/settings.json for the Continue extension only.
-    4. Prints the exact steps to open the model in VS Code.
-
-.PARAMETER WorkDir
-    Workspace folder to write .vscode/settings.json into.
-    Defaults to the current directory.
-
-.PARAMETER OllamaHost
-    host:port the Ollama API listens on. Defaults to 127.0.0.1:11434.
-
-.EXAMPLE
-    .\OlamaCLI\patch-agents.ps1
-    .\OlamaCLI\patch-agents.ps1 -WorkDir "C:\MyProject"
 #>
 
 [CmdletBinding()]
@@ -31,119 +12,213 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-function Write-Ok   ([string]$t) { Write-Host "  [OK]  $t" -ForegroundColor Green  }
-function Write-Warn ([string]$t) { Write-Host "  [!!]  $t" -ForegroundColor Yellow }
-function Write-Info ([string]$t) { Write-Host "  [··]  $t" -ForegroundColor White  }
-function Write-Fail ([string]$t) { Write-Host "  [XX]  $t" -ForegroundColor Red    }
+function Write-Ok   ([string]$t) { Write-Host ("  [OK]  " + $t) -ForegroundColor Green  }
+function Write-Warn ([string]$t) { Write-Host ("  [!!]  " + $t) -ForegroundColor Yellow }
+function Write-Info ([string]$t) { Write-Host ("  [..]  " + $t) -ForegroundColor White  }
+function Write-Fail ([string]$t) { Write-Host ("  [XX]  " + $t) -ForegroundColor Red    }
 
-Write-Host "`n━━━  Ollama Agent Patch  ━━━" -ForegroundColor Cyan
+$HostUrl = "http://$OllamaHost"
+Write-Host "
+=== Ollama Local AI for VS Code ===" -ForegroundColor Cyan
 
-# ── 1. Verify ollama is installed ─────────────────────────────────────────────
-if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
-    Write-Fail "ollama not found on PATH. Install from https://ollama.com/download"
-    exit 1
-}
-
-# ── 2. List installed models and let user pick ONE ────────────────────────────
-Write-Info "Reading installed models from 'ollama list'..."
-
-$rawLines   = ollama list 2>&1
-$modelNames = @()
-foreach ($line in $rawLines) {
-    if ($line -match '^\s*NAME' -or [string]::IsNullOrWhiteSpace($line)) { continue }
-    $parts = $line -split '\s+'
-    if ($parts.Count -ge 1 -and $parts[0]) { $modelNames += $parts[0] }
-}
-
-if ($modelNames.Count -eq 0) {
-    Write-Fail "No models found. Pull one first:  ollama pull llama3.1"
-    exit 1
-}
-
-Write-Host ""
-Write-Host "  Locally available models:" -ForegroundColor Cyan
-for ($i = 0; $i -lt $modelNames.Count; $i++) {
-    Write-Host ("    [{0,2}]  {1}" -f ($i + 1), $modelNames[$i]) -ForegroundColor Gray
-}
-Write-Host ""
-
-$selectedModel = $null
-while (-not $selectedModel) {
-    $input = Read-Host "  Enter model number"
-    if ($input -match '^\d+$') {
-        $idx = [int]$input - 1
-        if ($idx -ge 0 -and $idx -lt $modelNames.Count) {
-            $selectedModel = $modelNames[$idx]
+function Ensure-OllamaInstalled {
+    if (Get-Command ollama -ErrorAction SilentlyContinue) {
+        $path = (Get-Command ollama).Source
+        Write-Ok "Ollama CLI found: $path"
+        return
+    }
+    Write-Warn "Ollama CLI was not found."
+    
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        $ans = Read-Host "  Install Ollama with winget now? [Y/n]"
+        if ([string]::IsNullOrWhiteSpace($ans) -or $ans -match '^[Yy]') {
+            winget install --id Ollama.Ollama -e
+            Write-Ok "Ollama installed."
+            return
         }
     }
-    if (-not $selectedModel) {
-        Write-Warn "Please enter a number between 1 and $($modelNames.Count)."
-    }
-}
-Write-Ok "Selected: $selectedModel"
 
-# ── 3. Set OLLAMA_HOST (this is what Copilot Chat reads — not settings.json) ──
-$env:OLLAMA_HOST = $OllamaHost
-[System.Environment]::SetEnvironmentVariable("OLLAMA_HOST", $OllamaHost, "User")
-Write-Ok "OLLAMA_HOST = '$OllamaHost'  (session + Windows user profile)"
-Write-Info "Copilot Chat detects local models via this env var — no settings key needed."
-
-# ── 4. Write .vscode/settings.json for Continue extension only ───────────────
-$vscodeDir    = Join-Path $WorkDir ".vscode"
-$settingsFile = Join-Path $vscodeDir "settings.json"
-
-if (-not (Test-Path $vscodeDir)) {
-    New-Item -ItemType Directory -Path $vscodeDir | Out-Null
+    Start-Process "https://ollama.com/download" -ErrorAction SilentlyContinue
+    Write-Fail "Install Ollama from https://ollama.com/download, then run this script again."
+    exit 1
 }
 
-# Load existing settings and preserve unrelated keys
-$data = if (Test-Path $settingsFile) {
-    try { Get-Content $settingsFile -Raw | ConvertFrom-Json }
-    catch { [PSCustomObject]@{} }
-} else { [PSCustomObject]@{} }
-
-# Remove the old (wrong) Copilot key if present
-$data.PSObject.Properties.Remove("github.copilot.advanced")
-
-# Continue extension — single selected model
-$data | Add-Member -Force -NotePropertyName "continue.models" -NotePropertyValue @(
-    [PSCustomObject]@{
-        title    = $selectedModel
-        provider = "ollama"
-        model    = $selectedModel
-        apiBase  = "http://$OllamaHost"
+function Wait-ForOllama {
+    for ($i=0; $i -lt 30; $i++) {
+        try {
+            $resp = Invoke-WebRequest -Uri $HostUrl -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+            Write-Ok "Ollama API is reachable at $HostUrl"
+            return $true
+        } catch {
+            Start-Sleep -Seconds 1
+        }
     }
-)
-$data | Add-Member -Force -NotePropertyName "continue.defaultModel" -NotePropertyValue $selectedModel
+    return $false
+}
 
-$data | ConvertTo-Json -Depth 10 | Set-Content -Path $settingsFile -Encoding UTF8
-Write-Ok "Wrote $settingsFile  (Continue: $selectedModel)"
+function Start-Ollama {
+    if (Wait-ForOllama) { return }
+    Write-Info "Starting Ollama server..."
+    Start-Process -WindowStyle Hidden -FilePath "ollama" -ArgumentList "serve"
+    if (-not (Wait-ForOllama)) {
+        Write-Fail "Ollama did not become reachable at $HostUrl."
+        exit 1
+    }
+}
 
-# ── 5. Print usage instructions ───────────────────────────────────────────────
-Write-Host ""
-Write-Host "━━━  Done! How to use '$selectedModel' in VS Code  ━━━" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  GitHub Copilot Chat (built-in)" -ForegroundColor Cyan
-Write-Host "    1. FULLY close and reopen VS Code (so it inherits OLLAMA_HOST)." -ForegroundColor Yellow
-Write-Host "    2. Open Chat:  Ctrl+Alt+I" -ForegroundColor Gray
-Write-Host "    3. Click the model-picker at the bottom of the chat input." -ForegroundColor Gray
-Write-Host "    4. Look for a 'Local' or 'Ollama' section  ->  pick $selectedModel" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  Continue extension (full agent + @codebase)" -ForegroundColor Cyan
-Write-Host "    1. Install Continue:  Ctrl+Shift+X  ->  search 'Continue'" -ForegroundColor Gray
-Write-Host "    2. Open sidebar:  Ctrl+L  ->  $selectedModel is pre-configured." -ForegroundColor Gray
-Write-Host ""
-Write-Host "  Active model : $selectedModel" -ForegroundColor Cyan
-Write-Host "  API endpoint : http://$OllamaHost" -ForegroundColor Cyan
-Write-Host ""
-Write-Host ""
-Write-Host "  Option B — Continue extension (full agent + @codebase)" -ForegroundColor Cyan
-Write-Host "    1. Install Continue:  Ctrl+Shift+X  ->  search 'Continue'" -ForegroundColor Gray
-Write-Host "    2. Open the sidebar:  Ctrl+L" -ForegroundColor Gray
-Write-Host "    3. Click the model name at the top to switch between models." -ForegroundColor Gray
-Write-Host "    4. Use @codebase, @docs, or plain chat." -ForegroundColor Gray
-Write-Host ""
-Write-Host "  Registered models:" -ForegroundColor Cyan
-foreach ($m in $modelNames) { Write-Host "    • $m" -ForegroundColor Gray }
-Write-Host "  API endpoint: http://$OllamaHost" -ForegroundColor Cyan
-Write-Host ""
+function Pull-FirstModelIfNeeded {
+    $models = Get-OllamaModels
+    if ($models.Count -gt 0) { return }
+
+    Write-Warn "No Ollama models are installed yet."
+    $recommendations = @()
+    $modelsFile = Join-Path $PSScriptRoot "models.txt"
+    if (Test-Path $modelsFile) {
+        foreach ($line in Get-Content $modelsFile) {
+            $cleaned = $line -split '#' | Select-Object -First 1
+            $cleaned = $cleaned.Trim()
+            if ($cleaned) { $recommendations += $cleaned }
+        }
+    }
+    if ($recommendations.Count -eq 0) {
+        $recommendations = @("llama3.1:8b", "qwen2.5-coder:7b", "deepseek-coder:6.7b")
+    }
+
+    Write-Host ""
+    Write-Host "  Recommended models:" -ForegroundColor Cyan
+    for ($i = 0; $i -lt $recommendations.Count; $i++) {
+        Write-Host ("    [{0,2}]  {1}" -f ($i + 1), $recommendations[$i])
+    }
+    Write-Host ""
+
+    $pullModel = $null
+    while (-not $pullModel) {
+        $ans = Read-Host "  Enter model number to pull"
+        if ($ans -match '^\d+$') {
+            $idx = [int]$ans - 1
+            if ($idx -ge 0 -and $idx -lt $recommendations.Count) {
+                $pullModel = $recommendations[$idx]
+            }
+        }
+        if (-not $pullModel) { Write-Warn "Please enter a number between 1 and $($recommendations.Count)." }
+    }
+
+    Write-Info "Pulling $pullModel. This can take a while..."
+    ollama pull $pullModel
+}
+
+function Get-OllamaModels {
+    $raw = ollama list 2>&1
+    $models = @()
+    foreach ($line in $raw) {
+        if ($line -match 'NAME' -or [string]::IsNullOrWhiteSpace($line)) { continue }
+        $parts = $line -split '\s+'
+        if ($parts.Count -ge 1 -and $parts[0]) { $models += $parts[0] }
+    }
+    return @($models)
+}
+
+function Select-Model {
+    $models = Get-OllamaModels
+    Write-Host ""
+    Write-Host "  Installed Ollama models:" -ForegroundColor Cyan
+    for ($i = 0; $i -lt $models.Count; $i++) {
+        Write-Host ("    [{0,2}]  {1}" -f ($i + 1), $models[$i])
+    }
+    Write-Host ""
+
+    $Global:SelectedModel = $null
+    while (-not $Global:SelectedModel) {
+        $ans = Read-Host "  Enter the ONE model number to use in VS Code"
+        if ($ans -match '^\d+$') {
+            $idx = [int]$ans - 1
+            if ($idx -ge 0 -and $idx -lt $models.Count) {
+                $Global:SelectedModel = $models[$idx]
+            }
+        }
+        if (-not $Global:SelectedModel) { Write-Warn "Please enter a number between 1 and $($models.Count)." }
+    }
+    Write-Ok "Selected model: $Global:SelectedModel"
+}
+
+function Persist-Environment {
+    $env:OLLAMA_HOST = $OllamaHost
+    $env:OLLAMA_MODEL = $Global:SelectedModel
+    [Environment]::SetEnvironmentVariable("OLLAMA_HOST", $OllamaHost, "User")
+    [Environment]::SetEnvironmentVariable("OLLAMA_MODEL", $Global:SelectedModel, "User")
+    Write-Ok "Saved OLLAMA_HOST and OLLAMA_MODEL to Windows User Profile"
+}
+
+function Write-VsCodeSettings {
+    $vscodeDir = Join-Path $WorkDir ".vscode"
+    $settingsFile = Join-Path $vscodeDir "settings.json"
+    if (-not (Test-Path $vscodeDir)) { New-Item -ItemType Directory -Path $vscodeDir | Out-Null }
+
+    $data = [PSCustomObject]@{}
+    if (Test-Path $settingsFile) {
+        try { $data = Get-Content $settingsFile -Raw | ConvertFrom-Json } catch {}
+    }
+
+    if ($data.PSObject.Properties.Match('github.copilot.advanced').Count -gt 0) {
+        $data.PSObject.Properties.Remove("github.copilot.advanced")
+    }
+
+    $continueModel = @(
+        [PSCustomObject]@{
+            title    = $Global:SelectedModel
+            provider = "ollama"
+            model    = $Global:SelectedModel
+            apiBase  = $HostUrl
+        }
+    )
+
+    $data | Add-Member -Force -NotePropertyName "continue.models" -NotePropertyValue $continueModel
+    $data | Add-Member -Force -NotePropertyName "continue.defaultModel" -NotePropertyValue $Global:SelectedModel
+
+    $data | ConvertTo-Json -Depth 10 | Set-Content -Path $settingsFile -Encoding UTF8
+    Write-Ok "Wrote $settingsFile for Continue ($Global:SelectedModel)"
+}
+
+function Install-ContinueIfPossible {
+    if (Get-Command code -ErrorAction SilentlyContinue) {
+        Write-Info "Installing/updating Continue extension in VS Code..."
+        $proc = Start-Process -FilePath "code" -ArgumentList "--install-extension","Continue.continue","--force" -Wait -PassThru -NoNewWindow
+        if ($proc.ExitCode -eq 0) { return }
+    }
+    Write-Warn "VS Code 'code' CLI not found or failed; install Continue manually from Extensions."
+}
+
+function Open-VsCode {
+    if (Get-Command code -ErrorAction SilentlyContinue) {
+        Write-Info "Opening VS Code in $WorkDir"
+        $env:OLLAMA_HOST = $OllamaHost
+        $env:OLLAMA_MODEL = $Global:SelectedModel
+        Start-Process -FilePath "code" -ArgumentList ""$WorkDir"" -NoNewWindow
+    } else {
+        Write-Warn "VS Code was configured, but I could not open it automatically."
+    }
+}
+
+Ensure-OllamaInstalled
+Start-Ollama
+Pull-FirstModelIfNeeded
+Select-Model
+Persist-Environment
+Write-VsCodeSettings
+Install-ContinueIfPossible
+Open-VsCode
+
+Write-Host "
+=== Done ===" -ForegroundColor Cyan
+Write-Host "  Active local model:  $Global:SelectedModel" -ForegroundColor Green
+Write-Host "  Ollama API:          $HostUrl" -ForegroundColor Green
+Write-Host "
+  Use it now:" -ForegroundColor Cyan
+Write-Host "  1. In VS Code, open Continue from the sidebar." -ForegroundColor Gray
+Write-Host "  2. Use $Global:SelectedModel with chat, @codebase, or edits." -ForegroundColor Gray
+Write-Host "
+  About GitHub Copilot Chat:" -ForegroundColor Cyan
+Write-Host "  This script sets OLLAMA_HOST correctly for Copilot local-model detection." -ForegroundColor Gray
+Write-Host "  If Copilot Chat is unavailable, VS Code cannot show local models inside Copilot." -ForegroundColor Gray
+Write-Host "  Continue is the no-Copilot-access local AI route and has been configured.
+" -ForegroundColor Gray
